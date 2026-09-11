@@ -89,14 +89,15 @@ Configuración mínima del `.env`:
 ```env
 NODE_ENV=production
 API_PORT=2785
-DOMAIN=whatsapp.tudominio.com
-DASHBOARD_ENABLED=true
-PROXY_ENABLED=true                 # usa Traefik (auto-SSL) incluido en compose
-TRAEFIK_ACME_EMAIL=tu@email.com    # email para Let's Encrypt
-DATABASE_TYPE=sqlite
+BASE_URL=https://whatsapp.tudominio.com
+DASHBOARD_URL=https://whatsapp.tudominio.com
+CORS_ORIGINS=https://whatsapp.tudominio.com
+DATABASE_TYPE=sqlite                    # sin DATABASE_NAME: el default vive en el volumen persistente
 REDIS_ENABLED=false
-API_MASTER_KEY=GENERA_UNA_CLAVE_LARGA   # generar con: openssl rand -hex 32
+API_MASTER_KEY=GENERA_UNA_CLAVE_LARGA   # generar con: openssl rand -hex 32 (mínimo 32 caracteres)
 ```
+
+El email de Let's Encrypt se edita en `traefik/traefik.prod.yml` (no en `.env`). Las antiguas `DOMAIN`, `PROXY_ENABLED`, `DASHBOARD_ENABLED` y `TRAEFIK_ACME_EMAIL` ya no existen.
 
 ### A.3 — Apuntar el DNS
 
@@ -111,12 +112,17 @@ Esperar 1-15 min para propagación.
 
 ### A.4 — Levantar todo
 
+El `docker-compose.yml` base ya **no incluye Traefik** (desde v0.12 el dashboard lo sirve la propia API en el puerto 2785). El HTTPS lo añade el overlay `docker-compose.prod.yml` de este repo. Antes de levantar, pon tu email real en `traefik/traefik.prod.yml` (`certificatesResolvers.letsencrypt.acme.email`): Traefik no expande variables `${...}` en ese archivo.
+
 ```bash
-docker compose --profile full up -d
-docker compose logs -f
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f
 ```
 
-Listo. En ~2 minutos están los contenedores arriba:
+> No uses `--profile full`: ese perfil ahora levanta Postgres, Redis y MinIO integrados (no Traefik), y fallan si no configuras sus contraseñas.
+> Requiere Docker Compose ≥ 2.20 (`docker compose version`).
+
+Listo. En ~2 minutos están los contenedores arriba (`openwa-api`, `openwa-docker-proxy`, `openwa-traefik`):
 
 - **API + Swagger**: `https://whatsapp.tudominio.com/api/docs`
 - **Dashboard**: `https://whatsapp.tudominio.com/`

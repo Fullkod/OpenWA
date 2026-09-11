@@ -420,67 +420,36 @@ NODE_ENV=production
 API_PORT=2785
 LOG_LEVEL=info
 
-# --- DOMINIO ---
-DOMAIN=open-wa.whizzlyplus.com
-DASHBOARD_PORT=2886
-
+# --- URLs públicas ---
 BASE_URL=https://open-wa.whizzlyplus.com
 DASHBOARD_URL=https://open-wa.whizzlyplus.com
-
 CORS_ORIGINS=https://open-wa.whizzlyplus.com
 
 # --- SSL/TLS (Traefik + Let's Encrypt) ---
-# ⚠️ Pon TU email real (Let's Encrypt avisa cuando caducan certs)
-TRAEFIK_ACME_EMAIL=admin@whizzlyplus.com
-TRAEFIK_ACME_STORAGE=/letsencrypt/acme.json
-
-# --- COMPONENTES ---
-DASHBOARD_ENABLED=true
-PROXY_ENABLED=true
+# ⚠️ El email de Let's Encrypt NO va aquí: edítalo en traefik/traefik.prod.yml
+#    (Traefik no expande ${VARIABLES} en su archivo estático).
+# docker-compose.prod.yml ya fija AUTO_START_SESSIONS=true, TRUSTED_PROXIES y NODE_ID.
 
 # --- ENGINE WhatsApp ---
+# Rutas de sesión y flags de Chromium: los defaults del contenedor ya son correctos.
 ENGINE_TYPE=whatsapp-web.js
-SESSION_DATA_PATH=./data/sessions
-PUPPETEER_HEADLESS=true
-PUPPETEER_ARGS=--no-sandbox,--disable-setuid-sandbox,--disable-dev-shm-usage,--disable-gpu
 
 # --- BASE DE DATOS (SQLite, simple) ---
+# NO pongas DATABASE_NAME: el default ./data/openwa.sqlite vive dentro del volumen persistente.
+# (Un valor como DATABASE_NAME=openwa crea el archivo fuera del volumen y, con el rootfs
+#  read-only del contenedor, la API no arranca.)
 DATABASE_TYPE=sqlite
-POSTGRES_BUILTIN=false
-DATABASE_HOST=localhost
-DATABASE_PORT=5432
-DATABASE_NAME=openwa
-DATABASE_USERNAME=openwa
-DATABASE_PASSWORD=ignored-with-sqlite
 DATABASE_SYNCHRONIZE=false
-DATABASE_LOGGING=false
 
 # --- REDIS (deshabilitado al inicio) ---
 REDIS_ENABLED=false
-REDIS_BUILTIN=false
-REDIS_HOST=localhost
-REDIS_PORT=6379
 
-# --- STORAGE (local) ---
+# --- STORAGE (local, dentro del volumen) ---
 STORAGE_TYPE=local
-MINIO_BUILTIN=false
-STORAGE_LOCAL_PATH=./data/media
-
-# --- WEBHOOK ---
-WEBHOOK_TIMEOUT=10000
-WEBHOOK_MAX_RETRIES=3
-WEBHOOK_RETRY_DELAY=5000
-
-# --- RATE LIMITING ---
-RATE_LIMIT_TTL=60
-RATE_LIMIT_MAX=100
-
-# --- PLUGINS ---
-PLUGINS_ENABLED=true
-PLUGINS_DIR=./data/plugins
 
 # --- SECURITY ⚠️ REEMPLAZAR ---
 # Pegar aquí la clave que generaste con openssl rand -hex 32
+# (desde v0.19 producción rechaza claves de menos de 32 caracteres)
 API_MASTER_KEY=PEGAR_AQUI_TU_CLAVE_GENERADA
 
 # --- SWAGGER ---
@@ -498,7 +467,10 @@ cd /opt/OpenWA
 grep API_MASTER_KEY .env
 
 # Comprobar que el dominio está correcto
-grep DOMAIN .env
+grep BASE_URL .env
+
+# Comprobar el email de Let's Encrypt
+grep email traefik/traefik.prod.yml
 ```
 
 > ⚠️ Si dejaste `PEGAR_AQUI_TU_CLAVE_GENERADA`, vuelve a editar y pega la clave real.
@@ -512,7 +484,7 @@ cd /opt/OpenWA
 
 # Construir y levantar todos los contenedores en background
 # (la primera vez tarda ~5-10 min porque construye la imagen ARM)
-docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile full up -d --build
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 
 # Ver los logs en vivo (Ctrl+C para salir, no detiene los contenedores)
 docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f
@@ -520,8 +492,10 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f
 
 Verás logs de varios servicios:
 - `openwa-traefik`: arranca, valida certificados
-- `openwa-api`: NestJS arrancando módulos, al final `🚀 OpenWA is running on...`
-- `openwa-dashboard`: nginx sirviendo el frontend React
+- `openwa-api`: NestJS arrancando módulos, al final `🚀 OpenWA is running on...`. También sirve el dashboard React (ya no hay contenedor `openwa-dashboard` aparte)
+- `openwa-docker-proxy`: proxy del socket de Docker que usa la API para orquestar servicios integrados
+
+> Requiere Docker Compose ≥ 2.20 (`docker compose version`); el `docker-compose.yml` base usa `depends_on.required`.
 
 Cuando veas en los logs de Traefik algo como:
 ```
@@ -658,7 +632,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml down
 
 ```bash
 cd /opt/OpenWA
-docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile full up -d
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
 ### Actualizar a la última versión
@@ -670,7 +644,7 @@ cd /opt/OpenWA
 git pull
 
 # Reconstruir y relanzar
-docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile full up -d --build
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 
 # Limpiar imágenes viejas (libera disco)
 docker image prune -f
@@ -678,7 +652,7 @@ docker image prune -f
 
 ### Backup de las sesiones de WhatsApp
 
-Las sesiones viven dentro del volumen Docker `openwa-data`. Para backup:
+Las sesiones viven dentro del volumen Docker `openwa_openwa-data` (nombre fijado en `docker-compose.yml`). Para backup:
 
 ```bash
 # Crear directorio para backups
@@ -687,7 +661,7 @@ sudo chown $USER:$USER /backup
 
 # Backup completo (data + db)
 docker run --rm \
-  -v openwa-data:/data \
+  -v openwa_openwa-data:/data \
   -v /backup:/backup \
   alpine tar czf /backup/openwa-$(date +%Y%m%d-%H%M).tar.gz -C /data .
 
@@ -698,7 +672,7 @@ Programa esto en cron para backups diarios:
 ```bash
 crontab -e
 # Añade al final:
-0 3 * * * docker run --rm -v openwa-data:/data -v /backup:/backup alpine tar czf /backup/openwa-$(date +\%Y\%m\%d).tar.gz -C /data .
+0 3 * * * docker run --rm -v openwa_openwa-data:/data -v /backup:/backup alpine tar czf /backup/openwa-$(date +\%Y\%m\%d).tar.gz -C /data .
 ```
 
 ### Monitorear recursos
@@ -738,9 +712,9 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml restart traefik
 
 ### Dashboard carga pero API da 404
 
-**Causa**: el routing de Traefik está mal o el orden de prioridad.
+**Causa**: el routing de Traefik está mal.
 
-**Fix**: revisar `traefik/dynamic.prod.yml` — `/api/` debe tener priority alta (100) y `/` priority baja (1).
+**Fix**: revisar `traefik/dynamic.prod.yml` — debe haber un solo router que envíe todo a `http://openwa-api:2785` (API, dashboard y Socket.IO comparten puerto). Si queda algún router apuntando a `openwa-dashboard:80`, es de la topología antigua: bórralo.
 
 ### `docker compose up` falla con "no matching manifest for linux/arm64"
 
@@ -806,7 +780,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml down -v
 docker compose -f docker-compose.yml -f docker-compose.prod.yml down --rmi all
 
 # Empezar limpio
-docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile full up -d --build
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 
 ---
@@ -834,10 +808,12 @@ sudo git clone https://github.com/rmyndharis/OpenWA.git
 sudo chown -R $USER:$USER OpenWA
 cd OpenWA
 cp docs/deploy/.env.example .env   # o copia el .env de esta guía
-nano .env   # editar DOMAIN, TRAEFIK_ACME_EMAIL, API_MASTER_KEY
+nano .env                      # editar BASE_URL, DASHBOARD_URL, CORS_ORIGINS, API_MASTER_KEY
+nano traefik/traefik.prod.yml  # editar el email de Let's Encrypt
+nano traefik/dynamic.prod.yml  # opcional: cambiar PathPrefix(`/`) por Host(`TU_DOMINIO`)
 
 # 7. Levantar
-docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile full up -d --build
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 
 # 8. Probar
 curl -sI https://TU_DOMINIO/api/health

@@ -1,46 +1,20 @@
 # Traefik Production Dynamic Configuration
-# - All routers on websecure (HTTPS) entrypoint
-# - TLS certificate via Let's Encrypt (ACME)
+# - Router on the websecure (HTTPS) entrypoint with a Let's Encrypt (ACME) certificate
+# - OpenWA is single-port: dashboard, REST API and Socket.IO all live on openwa-api:2785,
+#   so one router covers everything (Traefik forwards WebSocket upgrades automatically)
 
 http:
   routers:
-    # API Router - highest priority for /api paths
-    api:
-      rule: 'PathPrefix(`/api/`)'
-      entryPoints:
-        - websecure
-      service: api
-      priority: 100
-      tls:
-        certResolver: letsencrypt
-
-    # WebSocket Router - highest priority for socket.io
-    websocket:
-      rule: 'PathPrefix(`/socket.io`)'
-      entryPoints:
-        - websecure
-      service: api
-      priority: 100
-      tls:
-        certResolver: letsencrypt
-
-    # Dashboard Router - catch-all for frontend (lowest priority)
-    dashboard:
+    openwa:
       rule: 'PathPrefix(`/`)'
       entryPoints:
         - websecure
-      service: dashboard
-      priority: 1
+      service: openwa
       tls:
         certResolver: letsencrypt
 
   services:
-    api:
+    openwa:
       loadBalancer:
         servers:
           - url: 'http://openwa-api:2785'
-
-    dashboard:
-      loadBalancer:
-        servers:
-          - url: 'http://openwa-dashboard:80'

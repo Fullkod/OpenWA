@@ -246,16 +246,6 @@ export default () => ({
     maxConcurrent: parseInt(process.env.MAX_CONCURRENT_SESSIONS || '0', 10),
   },
 
-  // Session lifecycle configuration
-  session: {
-    // When true (default), sessions that were active before the last shutdown
-    // are re-launched automatically on boot. Set SESSION_AUTO_START=false to
-    // disable and require manual /start calls after every restart.
-    autoStart: process.env.SESSION_AUTO_START !== 'false',
-    // Delay (ms) between consecutive auto-starts to avoid Chromium thrash
-    autoStartStaggerMs: parseInt(process.env.SESSION_AUTO_START_STAGGER_MS || '1500', 10),
-  },
-
   // Webhook configuration
   webhook: {
     timeout: parseInt(process.env.WEBHOOK_TIMEOUT || '10000', 10),

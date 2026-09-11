@@ -19,6 +19,11 @@ entryPoints:
 
   websecure:
     address: ':443'
+    # Generous timeouts so Traefik doesn't cut the persistent Socket.IO connection
+    transport:
+      respondingTimeouts:
+        readTimeout: 600s
+        idleTimeout: 600s
 
 certificatesResolvers:
   letsencrypt:

@@ -1,17 +1,39 @@
 # OpenWA - Self-Signed HTTPS Override (IP access, no domain)
 # Use with:
-#   docker compose -f docker-compose.yml -f docker-compose.selfsigned.yml --profile full up -d --build
+#   docker compose -f docker-compose.yml -f docker-compose.selfsigned.yml up -d --build
+#
+# Do NOT add `--profile full`: since v0.12+ that profile starts the built-in Postgres,
+# Redis and MinIO (not Traefik). Traefik has no profile here, so this file alone brings it up.
 #
 # This override:
-# - Exposes Traefik publicly on ports 80 and 443
+# - Adds a Traefik service (the base docker-compose.yml no longer ships one) exposed on 80/443
 # - Serves a self-signed certificate (browser warns once; traffic IS encrypted)
 # - Requires NO domain and NO Let's Encrypt
+# - Routes everything to openwa-api:2785 (API, dashboard and Socket.IO share that single port)
 
 services:
   traefik:
+    image: traefik:v3.0
+    container_name: openwa-traefik
+    restart: unless-stopped
+    networks:
+      - openwa-network
     ports:
       - '80:80'
       - '443:443'
     volumes:
       - ./traefik/traefik.selfsigned.yml:/etc/traefik/traefik.yml:ro
       - ./traefik/dynamic.selfsigned.yml:/etc/traefik/dynamic.yml:ro
+    depends_on:
+      - openwa-api
+    labels:
+      - 'com.openwa.service=proxy'
+
+  openwa-api:
+    environment:
+      # Single-instance deployment: re-launch authenticated sessions after a restart.
+      - AUTO_START_SESSIONS=${AUTO_START_SESSIONS:-true}
+      # Trust X-Forwarded-For from Traefik (Docker bridge range) so rate limits see real client IPs.
+      - TRUSTED_PROXIES=${TRUSTED_PROXIES:-172.16.0.0/12}
+      # Stable node identity so a recreated container re-adopts its sessions immediately.
+      - NODE_ID=${NODE_ID:-openwa-1}

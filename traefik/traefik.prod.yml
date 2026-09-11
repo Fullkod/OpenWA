@@ -22,11 +22,17 @@ entryPoints:
     http:
       tls:
         certResolver: letsencrypt
+    # Generous timeouts so Traefik doesn't cut the persistent Socket.IO connection
+    transport:
+      respondingTimeouts:
+        readTimeout: 600s
+        idleTimeout: 600s
 
 certificatesResolvers:
   letsencrypt:
     acme:
-      email: ${TRAEFIK_ACME_EMAIL}
+      # EDIT ME: Traefik does NOT expand ${ENV} in the static file, so the email must be literal
+      email: admin@example.com
       storage: /letsencrypt/acme.json
       httpChallenge:
         entryPoint: web
