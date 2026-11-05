@@ -72,6 +72,7 @@ export const CHAT_KINDS: readonly ChatKind[] = ['individual', 'group', 'channel'
 export const MAX_CONDITIONS = 20;
 export const MAX_VALUES_PER_CONDITION = 100;
 export const MAX_TEXT_VALUE_LENGTH = 1000;
+export const MAX_ID_VALUE_LENGTH = 128;
 
 const ID_OPERATORS: FilterOperator[] = ['is', 'isNot'];
 const TEXT_OPERATORS: FilterOperator[] = ['contains', 'equals'];
@@ -98,6 +99,21 @@ export const FILTER_FIELDS: Record<string, FieldDefinition[]> = {
       kind: 'id',
       operators: ID_OPERATORS,
       resolve: data => str(data.to),
+    },
+    {
+      // Conversation JID (DM or group). Carried by the message events proper: `IncomingMessage`
+      // declares `chatId` required, and the edited, reaction and revoked events set it explicitly.
+      // `message.ack` and `message.failed` carry it too when the engine's update names the chat
+      // (both engines do on the live path), so a chatId condition scopes those two to that chat.
+      // A payload whose chat is unknown falls under the generic absent-field rule: an `is`
+      // condition suppresses it and an `isNot` condition passes it (docs/06 states the rule for
+      // `sender` the same way).
+      // Deliberately without a fall back to `from`, which is the sender on a DM and this session on
+      // an outbound message, so it would silently scope the filter to the wrong conversation.
+      field: 'chatId',
+      kind: 'id',
+      operators: ID_OPERATORS,
+      resolve: data => str(data.chatId),
     },
     {
       field: 'body',

@@ -5,16 +5,19 @@ import (
 	"net/url"
 )
 
-// ListSessionsQuery paginates GET /sessions. Both fields optional.
+// ListSessionsQuery paginates GET /sessions. All fields optional.
 type ListSessionsQuery struct {
 	Limit  *int
 	Offset *int
+	// Name returns only the session with exactly this name (case-sensitive).
+	Name *string
 }
 
 func (q *ListSessionsQuery) values() url.Values {
 	v := url.Values{}
 	setInt(v, "limit", q.Limit)
 	setInt(v, "offset", q.Offset)
+	setStr(v, "name", q.Name)
 	return v
 }
 
@@ -53,26 +56,31 @@ type MuteChannelRequest struct {
 	Mute bool `json:"mute"`
 }
 
-// CustomLinkPreview is a caller-supplied link preview. Nothing is fetched for these.
+// CustomLinkPreview is a caller-supplied link preview. The page is not fetched; only ThumbnailURL,
+// when set, is.
 type CustomLinkPreview struct {
 	URL string `json:"url"`
 	// Title is required — WhatsApp will not render a preview without one.
 	Title       string `json:"title"`
 	Description string `json:"description,omitempty"`
+	// ThumbnailURL is the preview image as an http(s) URL, fetched under the media SSRF rules; it
+	// renders the large card. At most 5 MiB.
+	ThumbnailURL string `json:"thumbnailUrl,omitempty"`
+	// ThumbnailBase64 is the preview image as base64, at most 5 MiB decoded. Wins over ThumbnailURL.
+	ThumbnailBase64 string `json:"thumbnailBase64,omitempty"`
 }
 
 // UpsertLabelRequest is a label create-or-update body. The id travels in the path, because WhatsApp
 // keys the write on it.
 type UpsertLabelRequest struct {
-	// Name is left alone when nil.
+	// Name nil drops the current name: the write replaces the whole label.
 	Name *string `json:"name,omitempty"`
 	// Color is WhatsApp's colour INDEX (0-19), NOT a hex value — it does not round-trip with the
-	// HexColor labels are read back with, because neither engine exposes the mapping. Nil leaves the
-	// current colour alone.
+	// HexColor labels are read back with, because neither engine exposes the mapping. Nil drops
+	// the current colour.
 	Color *int `json:"color,omitempty"`
 }
 
-// ParticipantPresence is one participant's presence within a chat.
 // SessionStatus is the session lifecycle state reported by the gateway.
 type SessionStatus string
 
@@ -107,6 +115,7 @@ const (
 	PresencePaused      PresenceState = "paused"
 )
 
+// ParticipantPresence is one participant's presence within a chat.
 type ParticipantPresence struct {
 	ID string `json:"id"`
 	// State is one of: available, unavailable, composing, recording, paused. "composing" and
@@ -158,10 +167,15 @@ type SessionResponse struct {
 	// Restriction reports a limit WhatsApp itself has placed on the account, or nil when there is
 	// none. Distinct from LastError, which describes a fault on the gateway's side.
 	Restriction *AccountRestriction `json:"restriction,omitempty"`
-	// EngineLoaded reports whether the gateway holds a live engine for this session -- the
-	// precondition stop/logout/force-kill require and start refuses. Not derivable from Status:
-	// "disconnected" covers both a session mid automatic-reconnect (engine present) and one stopped
-	// with no engine. Nil from a gateway that predates the field.
+	// EngineLoaded reports whether the gateway holds a live engine for this session: an engine in
+	// the answering process or, in a multi-node deployment, a live claim by the node running it. On
+	// the node running the session, true means stop/logout/force-kill can act and start is refused.
+	// For a session another node runs, those routes act only when request routing (NODE_URL on
+	// every node) forwards them; without it, other nodes answer 409 to start and stop and 400 to
+	// logout and force-kill. Not derivable from Status: "disconnected" covers both a session mid
+	// automatic-reconnect (engine present) and one stopped with no engine. A gateway that predates
+	// the field omits it, which decodes as false; against such a gateway false does not mean no
+	// engine is loaded, so fall back to Status.
 	EngineLoaded bool `json:"engineLoaded"`
 }
 
@@ -175,13 +189,13 @@ const (
 	ProxySOCKS5 ProxyType = "socks5"
 )
 
-// CreateSessionRequest is the body for creating a session. ProxyType is one of:
-// http, https, socks4, socks5.
+// CreateSessionRequest is the body for creating a session.
 type CreateSessionRequest struct {
-	Name      string         `json:"name"`
-	Config    map[string]any `json:"config,omitempty"`
-	ProxyURL  string         `json:"proxyUrl,omitempty"`
-	ProxyType ProxyType      `json:"proxyType,omitempty"`
+	Name     string         `json:"name"`
+	Config   map[string]any `json:"config,omitempty"`
+	ProxyURL string         `json:"proxyUrl,omitempty"`
+	// Deprecated: ignored by the server; the ProxyURL scheme selects the proxy protocol.
+	ProxyType ProxyType `json:"proxyType,omitempty"`
 }
 
 // SessionProxy is the masked per-session proxy configuration returned by GET/PATCH /proxy.
@@ -248,20 +262,23 @@ type SessionStatsOverview struct {
 	Active       int            `json:"active"`
 	Ready        int            `json:"ready"`
 	Disconnected int            `json:"disconnected"`
-	ByStatus     map[string]int `json:"byStatus,omitempty"`
+	ByStatus     map[string]int `json:"byStatus"`
 	MemoryUsage  MemoryUsage    `json:"memoryUsage"`
 }
 
 // SessionConfig is a session's effective runtime configuration. A nil MaxReconnectAttempts means
-// unlimited — not unset.
+// unlimited — not unset. AutoRejectCalls works on Baileys only: whatsapp-web.js stores the flag but
+// cannot reject a call, so calls keep ringing there.
 type SessionConfig struct {
 	AutoRejectCalls      bool `json:"autoRejectCalls"`
 	MaxReconnectAttempts *int `json:"maxReconnectAttempts"`
 	ReconnectBaseDelay   int  `json:"reconnectBaseDelay"`
 }
 
-// UpdateSessionConfigRequest is a partial update of a RUNNING session's config — no re-link, no QR
-// scan.
+// UpdateSessionConfigRequest is a partial update of a session's config, merged in any session state
+// with no restart, re-link or QR scan. AutoRejectCalls applies immediately, on Baileys only (whatsapp-web.js
+// stores the flag but cannot reject a call); MaxReconnectAttempts and ReconnectBaseDelay apply on the
+// next start.
 //
 // The route needs THREE states per field, not two: a key that is absent leaves the value unchanged, a
 // key sent as explicit null clears it back to the default, and a value sets it. A `*int` with
